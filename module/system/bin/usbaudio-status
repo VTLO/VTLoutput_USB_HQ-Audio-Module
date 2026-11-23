@@ -1,0 +1,48 @@
+#!/system/bin/sh
+# usbaudio-status — what is the USB DAC really receiving right now?
+# Run as root while music is playing:   su -c usbaudio-status        (add -v for the flinger dump)
+ASOUND="${ASOUND:-/proc/asound}"
+
+echo "== Resampler properties (effective) =="
+for k in af.resampler.quality ro.audio.resampler.psd.enable_at_samplerate \
+         ro.audio.resampler.psd.stopband ro.audio.resampler.psd.halflength \
+         ro.audio.resampler.psd.tbwcheat vendor.audio.adm.buffering.ms; do
+  v="$(getprop "$k")"
+  printf '  %-46s %s\n' "$k" "${v:-<unset>}"
+done
+
+echo
+echo "== USB audio cards =="
+found=0
+for c in "$ASOUND"/card[0-9]*; do
+  [ -f "$c/usbid" ] || continue
+  found=1
+  echo "  $(basename "$c")  [$(cat "$c/id" 2>/dev/null)]  usb $(cat "$c/usbid" 2>/dev/null)"
+  live=0
+  for hw in "$c"/pcm*p/sub*/hw_params; do
+    [ -f "$hw" ] || continue
+    grep -q '^closed' "$hw" 2>/dev/null && continue
+    live=1
+    fmt="$(awk '/^format:/{print $2}' "$hw")"
+    ch="$(awk '/^channels:/{print $2}' "$hw")"
+    rate="$(awk '/^rate:/{print $2}' "$hw")"
+    echo "    LIVE  format=$fmt  channels=$ch  rate=${rate} Hz"
+    case "$rate" in
+      44100) echo "    -> DAC runs at 44.1 kHz: CD/Deezer HiFi material needs no sample-rate conversion." ;;
+      48000) echo "    -> Android mixer at 48 kHz: 44.1 kHz sources are resampled (with this module's filter)." ;;
+      *)     echo "    -> DAC runs at ${rate} Hz." ;;
+    esac
+  done
+  [ "$live" = 0 ] && echo "    idle — start playback in Deezer, then run this again."
+  if [ -f "$c/stream0" ]; then
+    echo "    DAC capabilities:"
+    grep -E 'Format|Channels|Rates' "$c/stream0" 2>/dev/null | sort -u | sed 's/^ */      /'
+  fi
+done
+[ "$found" = 0 ] && echo "  no USB audio card found (plug the DAC/headphones in, or run as root)."
+
+if [ "$1" = "-v" ]; then
+  echo
+  echo "== audio_flinger (rates / formats) =="
+  dumpsys media.audio_flinger 2>/dev/null | grep -iE 'output thread|sample rate|HAL format|usb' | head -40
+fi

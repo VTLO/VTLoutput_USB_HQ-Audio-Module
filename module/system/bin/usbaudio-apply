@@ -1,0 +1,4 @@
+#!/system/bin/sh
+# Apply /data/adb/vtlo_usbaudio/config right now (new tracks pick it up; no reboot).
+# af.resampler.quality is only read when audioserver starts: run `killall audioserver` for that one.
+exec sh /data/adb/modules/vtlo_usb_audio_hq/apply.sh
