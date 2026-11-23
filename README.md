@@ -1,4 +1,8 @@
+<p align="center"><img src="assets/banner.svg" alt="VTLoutput_HQ - made for Pixel 8 Pro, Android 17 (CP4A.261105.040.A1)" width="100%"></p>
+
 # VTLoutput USB HQ Audio Module
+
+> **Built for Pixel 8 Pro - Android 17 (build CP4A.261105.040.A1).** Other devices/ROMs are untested.
 
 High-quality USB-C audio on rooted Android: a Magisk module, a companion app (**VTLoutput_HQ**) and a Termux toolkit.
 
