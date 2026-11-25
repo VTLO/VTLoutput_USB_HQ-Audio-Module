@@ -27,6 +27,7 @@ import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import android.view.inputmethod.EditorInfo;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -40,6 +41,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -66,6 +68,19 @@ public class MainActivity extends Activity {
     final ExecutorService io = Executors.newSingleThreadExecutor();
     final Handler ui = new Handler(Looper.getMainLooper());
     SharedPreferences prefs;
+    final ExecutorService net = Executors.newSingleThreadExecutor();
+    List<AutoEq.Entry> eqIndex;
+    AutoEq.Profile eqProfile;
+    String eqNameStr = "";
+    final int[] eqMan = new int[Eq.MANUAL_FC.length];
+    EqCurveView eqCurve;
+    Switch eqSwitch, headSwitch;
+    Slider preSlider;
+    TextView eqStatus, eqInfo, eqPlanText, gainStatus;
+    EditText eqSearch;
+    LinearLayout eqResults, gainBox;
+    boolean eqRestoring;
+    final List<GainCtl> gainCtls = new ArrayList<>();
     Slider zoSlider, zhSlider, sensSlider, vSlider;
     TextView[] typeChips = new TextView[3];
     int impType = 0;
@@ -318,6 +333,8 @@ public class MainActivity extends Activity {
         admSlider.enable(false);
         rs.addView(text("Lower buffering can cut jitter but may cause dropouts. Leave off unless you hear problems.", 11, SUB, false));
 
+        buildEqCard(root);
+        buildGainCard(root);
         buildImpedanceCard(root);
 
         // --- Actions card
@@ -364,6 +381,8 @@ public class MainActivity extends Activity {
         selectProfile("hq");
         detect();
         restoreImpedance();
+        restoreEq();
+        loadIndex(false);
     }
 
     @Override protected void onResume() {
@@ -371,7 +390,7 @@ public class MainActivity extends Activity {
         if (autoRefresh) tick();
         if (specSwitch != null && specSwitch.isChecked()) startSpectrum();
     }
-    @Override protected void onDestroy() { super.onDestroy(); stopViz(); io.shutdownNow(); }
+    @Override protected void onDestroy() { super.onDestroy(); stopViz(); io.shutdownNow(); net.shutdownNow(); }
 
     // ---------------------------------------------------------------- profile logic
     void storeCustom() {
@@ -671,6 +690,7 @@ public class MainActivity extends Activity {
 
     void tick() {
         ui.removeCallbacks(tickRunnable);
+        if (eqStatus != null) eqStatus.setText(EqService.status);
         if (!autoRefresh) return;
         refreshStatus();
         ui.postDelayed(tickRunnable, 2000);
@@ -781,6 +801,312 @@ public class MainActivity extends Activity {
         vSlider.set(prefs.getInt("imp_v", 10));
         impType = Math.max(0, Math.min(2, prefs.getInt("imp_type", 0)));
         impChanged();
+    }
+
+    // ---------------------------------------------------------------- Equalizer + AutoEq
+    void buildEqCard(LinearLayout root) {
+        LinearLayout ec = card(root, "Equalizer - AutoEq + 10 bands");
+        ec.addView(text("Float multiband EQ (128 frequency bands, Android DynamicsProcessing). It never resamples or reduces bit depth, the USB output keeps its rate and format. Drag the orange dots (31 Hz - 16 kHz, +-12 dB); the grey dashed curve is the AutoEq profile.", 11, SUB, false));
+        eqCurve = new EqCurveView(this);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2);
+        clp.topMargin = dp(10);
+        ec.addView(eqCurve, clp);
+        eqCurve.listener = (i, tenths, done) -> { eqMan[i] = tenths; eqChanged(done); };
+
+        eqSwitch = toggle(ec, "Equalizer active");
+        eqSwitch.setOnCheckedChangeListener((v, on) -> { if (!eqRestoring) setEqRunning(on); });
+        headSwitch = toggle(ec, "Auto headroom (lowers input gain so boosts cannot clip)");
+        headSwitch.setChecked(true);
+        headSwitch.setOnCheckedChangeListener((v, on) -> eqChanged(true));
+        preSlider = new Slider(ec, "Preamp", -120, 60, "", () -> eqChanged(false));
+        preSlider.bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) { preSlider.upd(); if (fromUser) eqChanged(false); }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { eqChanged(true); }
+        });
+        preSlider.set(0);
+        button(ec, "Reset 10 manual bands", CARD2, () -> { java.util.Arrays.fill(eqMan, 0); eqChanged(true); });
+        eqPlanText = text("", 12, TXT, false);
+        ec.addView(eqPlanText);
+        eqStatus = mono(11);
+        eqStatus.setText(EqService.status);
+        ec.addView(eqStatus);
+
+        TextView h = text("AUTOEQ PROFILE", 11, ACC, true);
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(-1, -2);
+        hl.topMargin = dp(16);
+        ec.addView(h, hl);
+        eqInfo = text("Loading AutoEq index...", 12, SUB, false);
+        ec.addView(eqInfo);
+        eqSearch = new EditText(this);
+        eqSearch.setHint("Search headphone / IEM (e.g. HD 600)");
+        eqSearch.setHintTextColor(SUB);
+        eqSearch.setTextColor(TXT);
+        eqSearch.setSingleLine(true);
+        eqSearch.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        eqSearch.setBackground(round(CARD2, 10));
+        eqSearch.setPadding(dp(12), dp(10), dp(12), dp(10));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+        slp.topMargin = dp(8);
+        ec.addView(eqSearch, slp);
+        eqSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { showEqResults(); }
+            @Override public void afterTextChanged(Editable e) { }
+        });
+        eqResults = new LinearLayout(this);
+        eqResults.setOrientation(LinearLayout.VERTICAL);
+        ec.addView(eqResults);
+        button(ec, "Clear AutoEq profile", CARD2, () -> { eqProfile = null; eqNameStr = ""; eqChanged(true); eqInfo.setText("AutoEq profile cleared"); });
+        button(ec, "Refresh AutoEq index", CARD2, () -> loadIndex(true));
+        ec.addView(text("Profiles come from github.com/jaakkopasanen/AutoEq (MIT). Global effects are best-effort on Android: the EQ attaches to the global mix and to every player that announces an audio session. The status box shows what really attached. Apps using Android's bit-perfect USB path bypass effects. EQ stops if the phone reboots or the app is force-stopped.", 11, SUB, false));
+    }
+
+    void eqChanged(boolean persist) {
+        if (eqCurve == null || preSlider == null) return;
+        preSlider.val.setText(String.format(java.util.Locale.US, "%+.1f dB", preSlider.get() / 10.0));
+        eqCurve.setData(eqProfile, eqMan);
+        Eq.Plan p = Eq.plan(eqProfile, eqMan, preSlider.get() / 10.0, headSwitch.isChecked(), 32);
+        eqPlanText.setText(String.format(java.util.Locale.US, "Peak boost %+.1f dB -> input gain %+.1f dB%s", p.peakDb, p.inputGainDb,
+                eqNameStr.isEmpty() ? "" : "  |  AutoEq: " + eqNameStr));
+        if (!persist) return;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < eqMan.length; i++) sb.append(i > 0 ? "," : "").append(eqMan[i]);
+        prefs.edit().putString("eq_manual", sb.toString()).putInt("eq_pre", preSlider.get())
+                .putBoolean("eq_head", headSwitch.isChecked()).apply();
+        if (EqService.running) {
+            try { startService(new Intent(this, EqService.class).setAction(EqService.ACTION_APPLY)); } catch (RuntimeException ignored) { }
+            ui.postDelayed(() -> { if (eqStatus != null) eqStatus.setText(EqService.status); }, 800);
+        }
+    }
+
+    void setEqRunning(boolean on) {
+        prefs.edit().putBoolean("eq_on", on).apply();
+        Intent i = new Intent(this, EqService.class);
+        try {
+            if (on) {
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 8);
+                eqChanged(true);
+                startForegroundService(i.setAction(EqService.ACTION_APPLY));
+                ui.postDelayed(() -> { if (eqStatus != null) eqStatus.setText(EqService.status); }, 1200);
+            } else {
+                stopService(i);
+                eqStatus.setText("Equalizer off");
+            }
+        } catch (RuntimeException e) {
+            eqStatus.setText("Could not start the service: " + e.getMessage());
+        }
+    }
+
+    void restoreEq() {
+        eqRestoring = true;
+        String t = prefs.getString("eq_text", "");
+        eqProfile = t.isEmpty() ? null : AutoEq.Profile.parse(t);
+        eqNameStr = prefs.getString("eq_name", "");
+        String[] parts = prefs.getString("eq_manual", "").split(",");
+        for (int i = 0; i < eqMan.length && i < parts.length; i++) {
+            try { eqMan[i] = Integer.parseInt(parts[i].trim()); } catch (NumberFormatException ignored) { }
+        }
+        preSlider.set(prefs.getInt("eq_pre", 0));
+        headSwitch.setChecked(prefs.getBoolean("eq_head", true));
+        eqSwitch.setChecked(EqService.running);
+        eqRestoring = false;
+        eqChanged(false);
+    }
+
+    void loadIndex(boolean force) {
+        final java.io.File cache = new java.io.File(getFilesDir(), "autoeq_index.md");
+        if (!force && cache.exists()) {
+            try {
+                byte[] b = java.nio.file.Files.readAllBytes(cache.toPath());
+                eqIndex = AutoEq.parseIndex(new String(b, java.nio.charset.StandardCharsets.UTF_8));
+                eqInfo.setText(eqIndex.size() + " profiles available (cached)");
+                if (System.currentTimeMillis() - cache.lastModified() < 7L * 86400000L) return;
+            } catch (Exception ignored) { }
+        }
+        eqInfo.setText("Downloading AutoEq index...");
+        net.execute(() -> {
+            try {
+                String md = AutoEq.fetch(AutoEq.RAW + "/INDEX.md", 30000);
+                List<AutoEq.Entry> list = AutoEq.parseIndex(md);
+                if (list.isEmpty()) throw new Exception("empty index");
+                java.nio.file.Files.write(cache.toPath(), md.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                onUi(() -> { eqIndex = list; eqInfo.setText(list.size() + " profiles available"); showEqResults(); });
+            } catch (Exception e) {
+                onUi(() -> eqInfo.setText((eqIndex == null ? "Index unavailable: " : "Refresh failed: ") + e.getMessage() + " (check internet)"));
+            }
+        });
+    }
+
+    void showEqResults() {
+        if (eqResults == null) return;
+        eqResults.removeAllViews();
+        if (eqIndex == null) return;
+        for (AutoEq.Entry e : AutoEq.search(eqIndex, eqSearch.getText().toString(), 12)) {
+            TextView b = text(e.label(), 13, TXT, false);
+            b.setBackground(round(CARD2, 10));
+            b.setPadding(dp(12), dp(10), dp(12), dp(10));
+            b.setOnClickListener(v -> selectEq(e));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.topMargin = dp(6);
+            eqResults.addView(b, lp);
+        }
+    }
+
+    void selectEq(AutoEq.Entry e) {
+        eqInfo.setText("Downloading " + e.name + "...");
+        net.execute(() -> {
+            try {
+                String txt = AutoEq.fetch(e.url(), 20000);
+                AutoEq.Profile p = AutoEq.Profile.parse(txt);
+                if (p.filters.isEmpty()) throw new Exception("no filters in profile");
+                onUi(() -> {
+                    eqProfile = p;
+                    eqNameStr = e.name;
+                    prefs.edit().putString("eq_text", txt).putString("eq_name", e.name).apply();
+                    eqInfo.setText("Selected: " + e.name + " (" + p.filters.size() + " filters, preamp " + p.preamp + " dB)");
+                    eqResults.removeAllViews();
+                    eqChanged(true);
+                });
+            } catch (Exception ex) {
+                onUi(() -> eqInfo.setText("Download failed: " + ex.getMessage()));
+            }
+        });
+    }
+
+    // ---------------------------------------------------------------- USB card hardware gain
+    static final class GainCtl {
+        int card, numid, min, max, count, cur;
+        String cardId, name, type;
+        long dbMin, dbMax;
+        boolean hasDb;
+        TextView label;
+        String dbText(int v) {
+            if (!hasDb || max == min) return String.valueOf(v);
+            return String.format(java.util.Locale.US, "%d (%.1f dB)", v, (dbMin + (double) (v - min) / (max - min) * (dbMax - dbMin)) / 100.0);
+        }
+    }
+
+    static List<GainCtl> parseGain(String out) {
+        List<GainCtl> list = new ArrayList<>();
+        int card = -1;
+        String cardId = "";
+        for (String line : out.split("\n")) {
+            if (line.startsWith("@@CARD ")) {
+                String[] a = line.split(" ", 3);
+                try { card = Integer.parseInt(a[1]); } catch (Exception e) { card = -1; }
+                cardId = a.length > 2 ? a[2].trim() : "";
+                continue;
+            }
+            String[] f = line.split("\t", -1);
+            if (card < 0 || f.length < 11) continue;
+            try {
+                if (!f[1].equals("2")) continue; // mixer controls only
+                String type = f[3];
+                if (!type.equals("int") && !type.equals("bool")) continue;
+                String nm = f[2];
+                String low = nm.toLowerCase(java.util.Locale.US);
+                if (low.contains("capture") || !(low.contains("volume") || low.contains("gain") || low.contains("mute") || low.contains("switch") || low.contains("level"))) continue;
+                GainCtl g = new GainCtl();
+                g.card = card; g.cardId = cardId; g.numid = Integer.parseInt(f[0]); g.name = nm; g.type = type;
+                g.count = Integer.parseInt(f[4]); g.min = Integer.parseInt(f[5]); g.max = Integer.parseInt(f[6]);
+                if (!f[8].isEmpty() && !f[9].isEmpty()) { g.hasDb = true; g.dbMin = Long.parseLong(f[8]); g.dbMax = Long.parseLong(f[9]); }
+                g.cur = f[10].isEmpty() ? g.min : Integer.parseInt(f[10].split(",")[0].trim());
+                list.add(g);
+            } catch (NumberFormatException ignored) { }
+        }
+        return list;
+    }
+
+    String toolPath() { return Root.BASE + "/vtlo-alsactl"; }
+
+    void buildGainCard(LinearLayout root) {
+        LinearLayout gc = card(root, "USB card hardware gain");
+        gc.addView(text("Controls the DAC's own volume/gain registers (ALSA mixer, root). Keep Android's volume high and trim here: the attenuation then happens in the DAC instead of throwing away digital bits. Only DACs that expose a USB volume control show up; many do not. Values reset when the DAC is unplugged.", 11, SUB, false));
+        button(gc, "Scan USB audio card", ACC, this::scanGain);
+        gainStatus = mono(11);
+        gainStatus.setText("Plug in the DAC, then scan.");
+        gc.addView(gainStatus);
+        gainBox = new LinearLayout(this);
+        gainBox.setOrientation(LinearLayout.VERTICAL);
+        gc.addView(gainBox);
+        button(gc, "Set all volumes to maximum", CARD2, () -> {
+            for (GainCtl g : gainCtls) if (g.type.equals("int") && g.name.toLowerCase(java.util.Locale.US).contains("volume")) setGain(g, g.max);
+        });
+        button(gc, "Restore last used levels", CARD2, () -> {
+            for (GainCtl g : gainCtls) if (prefs.contains("hw_" + g.name)) setGain(g, prefs.getInt("hw_" + g.name, g.cur));
+        });
+    }
+
+    void scanGain() {
+        if (!rootOk) { gainStatus.setText("Root not available."); return; }
+        gainStatus.setText("Scanning...");
+        io.execute(() -> {
+            try {
+                java.io.File tmp = new java.io.File(getCacheDir(), "vtlo-alsactl");
+                try (java.io.InputStream in = getAssets().open("vtlo-alsactl"); java.io.FileOutputStream o = new java.io.FileOutputStream(tmp)) {
+                    byte[] b = new byte[8192];
+                    int n;
+                    while ((n = in.read(b)) > 0) o.write(b, 0, n);
+                }
+                String script = "mkdir -p " + Root.BASE + "; cp " + tmp.getAbsolutePath() + " " + toolPath() + " && chmod 755 " + toolPath() + "\n"
+                        + "for d in /proc/asound/card*; do [ -e \"$d/usbid\" ] || continue; n=${d##*card}; echo \"@@CARD $n $(cat $d/id)\"; " + toolPath() + " list $n 2>&1; done\n"
+                        + "echo @@END";
+                Root.Result r = Root.sh(script.replace("\\n", "\n"), 20);
+                List<GainCtl> list = parseGain(r.out);
+                onUi(() -> renderGain(list, r.out));
+            } catch (Exception e) {
+                onUi(() -> gainStatus.setText("Scan failed: " + e.getMessage()));
+            }
+        });
+    }
+
+    void renderGain(List<GainCtl> list, String raw) {
+        gainCtls.clear();
+        gainCtls.addAll(list);
+        gainBox.removeAllViews();
+        if (!raw.contains("@@CARD")) { gainStatus.setText("No USB audio card detected (is the DAC plugged in?)"); return; }
+        if (list.isEmpty()) { gainStatus.setText("USB card found but it exposes no playback volume/gain control to Android (typical for DACs with fixed output or buttons only).\n" + raw.replaceAll("(?m)^\\d+\\t.*$", "").trim()); return; }
+        gainStatus.setText(list.size() + " control(s) on " + list.get(0).cardId);
+        for (GainCtl g : list) {
+            if (g.type.equals("bool")) {
+                Switch sw = toggle(gainBox, g.name);
+                sw.setChecked(g.cur != 0);
+                sw.setOnCheckedChangeListener((v, on) -> setGain(g, on ? 1 : 0));
+                continue;
+            }
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            TextView n = text(g.name, 13, SUB, false);
+            g.label = text(g.dbText(g.cur), 13, TXT, true);
+            row.addView(n, new LinearLayout.LayoutParams(0, -2, 1f));
+            row.addView(g.label);
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+            rlp.topMargin = dp(12);
+            gainBox.addView(row, rlp);
+            SeekBar bar = new SeekBar(this);
+            bar.setMax(g.max - g.min);
+            bar.setProgress(g.cur - g.min);
+            bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) { g.label.setText(g.dbText(p + g.min)); }
+                @Override public void onStartTrackingTouch(SeekBar sb) { }
+                @Override public void onStopTrackingTouch(SeekBar sb) { setGain(g, sb.getProgress() + g.min); }
+            });
+            gainBox.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+        }
+    }
+
+    void setGain(GainCtl g, int v) {
+        g.cur = v;
+        prefs.edit().putInt("hw_" + g.name, v).apply();
+        io.execute(() -> {
+            Root.Result r = Root.sh(toolPath() + " set " + g.card + " " + g.numid + " " + v, 10);
+            onUi(() -> {
+                if (r.code != 0) gainStatus.setText("Set failed: " + r.out);
+                else gainStatus.setText(g.name + " = " + r.out.trim());
+            });
+        });
     }
 
     // ---------------------------------------------------------------- visuals
