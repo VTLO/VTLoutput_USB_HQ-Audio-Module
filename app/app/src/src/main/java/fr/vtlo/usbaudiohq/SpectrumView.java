@@ -22,11 +22,11 @@ final class SpectrumView extends View {
 
     SpectrumView(Context c) {
         super(c);
-        cap.setColor(0xFFC45A36);
-        txt.setColor(0xFF8B93A1);
+        cap.setColor(0xFFFF9A1F);
+        txt.setColor(0xFF8F8F8F);
         txt.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 10, getResources().getDisplayMetrics()));
         grid.setColor(0x22FFFFFF);
-        meterBg.setColor(0xFF222730);
+        meterBg.setColor(0xFF1B1B1B);
     }
 
     float dp(float v) {
@@ -59,12 +59,14 @@ final class SpectrumView extends View {
 
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
-        bar.setShader(new LinearGradient(0, dp(8), 0, h - dp(40), 0xFFC45A36, 0xFF7CF0C8, Shader.TileMode.CLAMP));
+        bar.setShader(new LinearGradient(0, dp(8), 0, h - dp(40), 0xFFF0467F, 0x661BC4CE, Shader.TileMode.CLAMP));
     }
 
     @Override
     protected void onDraw(Canvas c) {
         float w = getWidth(), top = dp(6), bot = getHeight() - dp(44);
+        rf.set(0, 0, w, bot + dp(2));
+        c.drawRoundRect(rf, dp(4), dp(4), meterBg);
         for (int i = 1; i < 4; i++) {
             float y = top + (bot - top) * i / 4f;
             c.drawLine(0, y, w, y, grid);
@@ -75,9 +77,11 @@ final class SpectrumView extends View {
             float h = Math.max(dp(2), (bot - top) * Math.min(1f, bars[i]));
             rf.set(x, bot - h, x + bw, bot);
             c.drawRoundRect(rf, dp(2), dp(2), bar);
-            float cy = bot - (bot - top) * Math.min(1f, caps[i]) - dp(3);
-            rf.set(x, cy, x + bw, cy + dp(2));
-            c.drawRect(rf, cap);
+            if (caps[i] > 0.02f) {
+                float cy = bot - (bot - top) * Math.min(1f, caps[i]) - dp(3);
+                rf.set(x, cy, x + bw, cy + dp(2));
+                c.drawRect(rf, cap);
+            }
         }
         c.drawText("30", 0, bot + dp(12), txt);
         c.drawText("1k", w * 0.40f, bot + dp(12), txt);
@@ -87,7 +91,7 @@ final class SpectrumView extends View {
         rf.set(0, my, w, my + mh);
         c.drawRoundRect(rf, dp(4), dp(4), meterBg);
         float frac = Math.max(0f, Math.min(1f, (peakDb + 60f) / 60f));
-        meter.setColor(peakDb > -3 ? 0xFFFF6B6B : (peakDb > -12 ? 0xFFFFB454 : 0xFF7CF0C8));
+        meter.setColor(peakDb > -3 ? 0xFFF0467F : (peakDb > -12 ? 0xFFFF9A1F : 0xFF45D36A));
         rf.set(0, my, w * frac, my + mh);
         c.drawRoundRect(rf, dp(4), dp(4), meter);
         float hx = w * Math.max(0f, Math.min(1f, (peakHold + 60f) / 60f));

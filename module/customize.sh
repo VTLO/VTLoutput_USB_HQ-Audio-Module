@@ -2,7 +2,7 @@ SKIPUNZIP=0
 BASE=/data/adb/vtlo_usbaudio
 api="${API:-$(getprop ro.build.version.sdk)}"
 
-ui_print "- USB Audio HQ (VTLO) v1.1"
+ui_print "- USB Audio HQ (VTLO) v1.6"
 [ "$api" -ge 31 ] 2>/dev/null || abort "! Android 12+ required (the resampler tuning needs it)"
 ui_print "- Android SDK $api"
 

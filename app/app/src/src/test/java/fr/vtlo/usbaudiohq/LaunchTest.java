@@ -35,7 +35,7 @@ public class LaunchTest {
         assertNotNull(root);
         int n = count(root);
         System.out.println("VIEW_COUNT=" + n + " bannerState=" + a.bannerState + " profile=" + a.profile);
-        assertTrue("UI should have many views", n > 80);
+        assertTrue("UI should have many views", n > 40);
         c.pause().resume().pause().stop().destroy();
     }
 }

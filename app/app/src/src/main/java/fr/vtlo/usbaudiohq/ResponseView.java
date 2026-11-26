@@ -31,20 +31,20 @@ final class ResponseView extends View {
         super(c);
         grid.setColor(0x22FFFFFF);
         grid.setStrokeWidth(dp(1));
-        cur.setColor(0xFF7CF0C8);
+        cur.setColor(0xFF1BC4CE);
         cur.setStyle(Paint.Style.STROKE);
         cur.setStrokeWidth(dp(2));
         cur.setStrokeJoin(Paint.Join.ROUND);
-        ref.setColor(0xFF8B93A1);
+        ref.setColor(0xFF8F8F8F);
         ref.setStyle(Paint.Style.STROKE);
         ref.setStrokeWidth(dp(1.5f));
         ref.setPathEffect(new DashPathEffect(new float[]{dp(5), dp(4)}, 0));
         fill.setStyle(Paint.Style.FILL);
-        mark.setColor(0xFFC45A36);
+        mark.setColor(0xFFFF9A1F);
         mark.setStrokeWidth(dp(1));
         mark.setPathEffect(new DashPathEffect(new float[]{dp(3), dp(3)}, 0));
         txt.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 10, getResources().getDisplayMetrics()));
-        txt.setColor(0xFF8B93A1);
+        txt.setColor(0xFF8F8F8F);
         compute(90, 32, 100, refDb);
         setParams(179, 408, 99, true);
     }
@@ -116,6 +116,8 @@ final class ResponseView extends View {
     @Override
     protected void onDraw(Canvas c) {
         float l = dp(34), t = dp(8), r = getWidth() - dp(6), b = getHeight() - dp(34);
+        fill.setColor(0xFF181818);
+        c.drawRect(l, t, r, b, fill);
         // grid + y labels
         for (int db = 0; db >= -200; db -= 50) {
             float y = t + (b - t) * (float) (-db / 220.0);
@@ -135,16 +137,16 @@ final class ResponseView extends View {
         if (active) {
             Path p = path(curDb, l, t, r, b);
             Path area = new Path(p);
-            area.lineTo(r, t);
-            area.lineTo(l, t);
+            area.lineTo(r, b);
+            area.lineTo(l, b);
             area.close();
-            fill.setColor(0x187CF0C8);
+            fill.setColor(0x401BC4CE);
             c.drawPath(area, fill);
             c.drawPath(p, cur);
         }
-        txt.setColor(active ? 0xFF7CF0C8 : 0xFF8B93A1);
+        txt.setColor(active ? 0xFF1BC4CE : 0xFF8F8F8F);
         c.drawText(info, l, getHeight() - dp(4), txt);
-        txt.setColor(0xFF8B93A1);
+        txt.setColor(0xFF8F8F8F);
         c.drawText("dashed: AOSP default (90 dB, 32 taps)", r - dp(190), t + dp(22), txt);
     }
 

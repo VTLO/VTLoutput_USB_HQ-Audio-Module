@@ -20,13 +20,13 @@ final class PathView extends View {
 
     PathView(Context c) {
         super(c);
-        box.setColor(0xFF222730);
+        box.setColor(0xFF1B1B1B);
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeWidth(dp(1.5f));
-        title.setColor(0xFFE8EAED);
+        title.setColor(0xFFDADADA);
         title.setFakeBoldText(true);
         title.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11, getResources().getDisplayMetrics()));
-        sub.setColor(0xFF8B93A1);
+        sub.setColor(0xFF8F8F8F);
         sub.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 10, getResources().getDisplayMetrics()));
         arrow.setStrokeWidth(dp(2));
     }
@@ -57,16 +57,16 @@ final class PathView extends View {
     protected void onDraw(Canvas c) {
         float w = getWidth(), h = getHeight();
         float bw = (w - dp(56)) / 3f, bh = dp(62), y = (h - bh) / 2f, gap = dp(28);
-        int accent = live ? 0xFF7CF0C8 : 0xFF3A414C;
+        int accent = live ? 0xFF1BC4CE : 0xFF444444;
         String[] t = {"APP", "ANDROID MIXER", "USB DAC"};
         String[] s = {"Deezer, Termux...", mixerSub + (live && rate != 44100 && !profileLabel.isEmpty() ? " | " + profileLabel : ""),
                 live ? (rate + " Hz | " + format + " | " + channels + "ch") : "no stream"};
         for (int i = 0; i < 3; i++) {
             float x = i * (bw + gap);
             rf.set(x, y, x + bw, y + bh);
-            c.drawRoundRect(rf, dp(10), dp(10), box);
-            stroke.setColor(i == 1 && live && rate != 44100 ? 0xFFC45A36 : accent);
-            c.drawRoundRect(rf, dp(10), dp(10), stroke);
+            c.drawRoundRect(rf, dp(4), dp(4), box);
+            stroke.setColor(i == 1 && live && rate != 44100 ? 0xFFF0467F : accent);
+            c.drawRoundRect(rf, dp(4), dp(4), stroke);
             c.drawText(t[i], x + dp(8), y + dp(20), title);
             drawFit(c, s[i], x + dp(8), y + dp(38), bw - dp(12));
         }
@@ -78,7 +78,7 @@ final class PathView extends View {
             c.drawLine(x2 - dp(5), cy + dp(4), x2, cy, arrow);
             if (live) {
                 float ph = ((System.currentTimeMillis() - t0) % 900) / 900f;
-                dot.setColor(0xFFC45A36);
+                dot.setColor(0xFFFF9A1F);
                 c.drawCircle(x1 + (x2 - x1) * ph, cy, dp(2.5f), dot);
             }
         }

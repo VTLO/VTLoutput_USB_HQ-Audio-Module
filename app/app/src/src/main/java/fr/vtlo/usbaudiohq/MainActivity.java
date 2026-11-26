@@ -26,6 +26,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.view.inputmethod.EditorInfo;
 import android.widget.ImageView;
@@ -51,8 +52,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
-    static final int BG = 0xFF0D0F12, CARD = 0xFF171A1F, CARD2 = 0xFF222730, ACC = 0xFF7CF0C8,
-            TXT = 0xFFE8EAED, SUB = 0xFF8B93A1, WARN = 0xFFFFB454, BAD = 0xFFFF6B6B;
+    static final int BG = 0xFF1E1E1E, CARD = 0xFF2C2C2C, CARD2 = 0xFF3A3A3A, ACC = 0xFFFF9A1F,
+            TXT = 0xFFDADADA, SUB = 0xFF8F8F8F, WARN = 0xFFFFC24B, BAD = 0xFFF0467F, TEAL = 0xFF1BC4CE, GREEN = 0xFF45D36A;
 
     static final String[] PROFILES = {"hq", "ultra", "custom", "off"};
     static final String[] PROFILE_LABELS = {"HQ", "Ultra", "Custom", "Off"};
@@ -68,24 +69,10 @@ public class MainActivity extends Activity {
     final ExecutorService io = Executors.newSingleThreadExecutor();
     final Handler ui = new Handler(Looper.getMainLooper());
     SharedPreferences prefs;
-    final ExecutorService net = Executors.newSingleThreadExecutor();
-    List<AutoEq.Entry> eqIndex;
-    AutoEq.Profile eqProfile;
-    String eqNameStr = "";
-    final int[] eqMan = new int[Eq.MANUAL_FC.length];
-    EqCurveView eqCurve;
-    Switch eqSwitch, headSwitch;
-    Slider preSlider;
-    TextView eqStatus, eqInfo, eqPlanText, gainStatus;
-    EditText eqSearch;
-    LinearLayout eqResults, gainBox;
-    boolean eqRestoring;
+    TextView gainStatus, impSource, impBasis;
+    LinearLayout gainBox, impTable;
     final List<GainCtl> gainCtls = new ArrayList<>();
-    Slider zoSlider, zhSlider, sensSlider, vSlider;
-    TextView[] typeChips = new TextView[3];
-    int impType = 0;
-    ImpedanceView impView;
-    TextView impVerdict, tileLoss, tileDf, tileMw, tileSpl;
+    CompoundButton lastDot;
     LinearLayout bannerCard;
     TextView bannerText, bannerBtn, modBtn;
     String bundledVer = "?", installedVer = "";
@@ -100,7 +87,7 @@ public class MainActivity extends Activity {
     TextView[] chips = new TextView[4];
     Slider sbSlider, hlSlider, tbwSlider, afSlider, admSlider;
     Spinner enableSpinner;
-    Switch admSwitch, moduleSwitch, autoSwitch, specSwitch;
+    CompoundButton admSwitch, moduleSwitch, autoSwitch, specSwitch;
     ResponseView respView;
     PathView pathView;
     SpectrumView specView;
@@ -115,22 +102,38 @@ public class MainActivity extends Activity {
     GradientDrawable round(int color, int radiusDp) {
         GradientDrawable g = new GradientDrawable();
         g.setColor(color);
-        g.setCornerRadius(dp(radiusDp));
+        g.setCornerRadius(dp(Math.min(radiusDp, 5)));
         return g;
     }
 
+    /** Device-style panel: title bar with power dot, returns the body. */
     LinearLayout card(LinearLayout parent, String title) {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackground(round(CARD, 18));
-        c.setPadding(dp(16), dp(14), dp(16), dp(16));
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackground(round(CARD, 5));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = dp(12);
-        parent.addView(c, lp);
-        TextView t = text(title.toUpperCase(), 12, ACC, true);
-        t.setLetterSpacing(0.12f);
-        c.addView(t);
-        return c;
+        lp.topMargin = dp(10);
+        parent.addView(outer, lp);
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackground(round(0xFF363636, 5));
+        bar.setPadding(dp(10), dp(8), dp(10), dp(8));
+        LiveButton dot = new LiveButton(this, "", LiveButton.DOT);
+        dot.setChecked(true);
+        dot.setClickable(false);
+        lastDot = dot;
+        bar.addView(dot, new LinearLayout.LayoutParams(dp(16), dp(16)));
+        TextView t = text(title, 14, TXT, true);
+        t.setPadding(dp(10), 0, 0, 0);
+        bar.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+        bar.addView(text("...", 13, SUB, true));
+        outer.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(14), dp(8), dp(14), dp(14));
+        outer.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        return body;
     }
 
     TextView text(String s, int sp, int color, boolean bold) {
@@ -146,7 +149,7 @@ public class MainActivity extends Activity {
         TextView t = text("", sp, TXT, false);
         t.setTypeface(Typeface.MONOSPACE);
         t.setTextIsSelectable(true);
-        t.setBackground(round(0xFF0F1216, 10));
+        t.setBackground(round(0xFF181818, 5));
         t.setPadding(dp(10), dp(8), dp(10), dp(8));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(8);
@@ -155,10 +158,10 @@ public class MainActivity extends Activity {
     }
 
     TextView button(LinearLayout parent, String label, int color, Runnable action) {
-        TextView b = text(label, 14, color == ACC ? 0xFF06251C : TXT, true);
+        TextView b = text(label, 14, color == ACC ? 0xFF1A1100 : TXT, true);
         b.setGravity(Gravity.CENTER);
         b.setPadding(dp(14), dp(12), dp(14), dp(12));
-        GradientDrawable bg = round(color == ACC ? ACC : CARD2, 12);
+        GradientDrawable bg = round(color == ACC ? ACC : CARD2, 4);
         if (color == WARN || color == BAD) bg.setStroke(dp(1), color);
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null));
         if (color == WARN || color == BAD) b.setTextColor(color);
@@ -169,52 +172,28 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    Switch toggle(LinearLayout parent, String label) {
-        Switch s = new Switch(this);
-        s.setText(label);
-        s.setTextColor(TXT);
-        s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+    CompoundButton toggle(LinearLayout parent, String label) {
+        LiveButton s = new LiveButton(this, label, LiveButton.BOX);
+        boolean horiz = parent.getOrientation() == LinearLayout.HORIZONTAL;
+        LinearLayout.LayoutParams lp = horiz ? new LinearLayout.LayoutParams(0, -2, 1f) : new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = dp(8);
         parent.addView(s, lp);
         return s;
     }
 
     final class Slider {
-        final TextView val;
-        final SeekBar bar;
-        final int min;
-        final String unit;
+        final KnobView knob;
 
         Slider(LinearLayout parent, String name, int min, int max, String unit, Runnable onUser) {
-            this.min = min;
-            this.unit = unit;
-            LinearLayout row = new LinearLayout(this_());
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            TextView n = text(name, 13, SUB, false);
-            val = text("", 13, TXT, true);
-            row.addView(n, new LinearLayout.LayoutParams(0, -2, 1f));
-            row.addView(val);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-            lp.topMargin = dp(10);
-            parent.addView(row, lp);
-            bar = new SeekBar(this_());
-            bar.setMax(max - min);
-            parent.addView(bar, new LinearLayout.LayoutParams(-1, -2));
-            bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
-                    upd();
-                    if (fromUser && onUser != null) onUser.run();
-                }
-                @Override public void onStartTrackingTouch(SeekBar s) { }
-                @Override public void onStopTrackingTouch(SeekBar s) { }
-            });
+            knob = new KnobView(this_(), name, min, max, v -> v + unit);
+            knob.listener = (v, fromUser, finished) -> { if (fromUser && onUser != null) onUser.run(); };
+            boolean horiz = parent.getOrientation() == LinearLayout.HORIZONTAL;
+            parent.addView(knob, horiz ? new LinearLayout.LayoutParams(0, -2, 1f) : new LinearLayout.LayoutParams(-1, -2));
         }
 
-        int get() { return bar.getProgress() + min; }
-        void set(int v) { bar.setProgress(Math.max(0, Math.min(bar.getMax(), v - min))); upd(); }
-        void upd() { val.setText(get() + unit); }
-        void enable(boolean e) { bar.setEnabled(e); bar.setAlpha(e ? 1f : 0.4f); }
+        int get() { return knob.get(); }
+        void set(int v) { knob.set(v); }
+        void enable(boolean e) { knob.setEnabled(e); }
     }
 
     MainActivity this_() { return this; }
@@ -243,7 +222,7 @@ public class MainActivity extends Activity {
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.setPadding(dp(14), 0, 0, 0);
         titles.addView(text("VTLoutput_HQ", 26, TXT, true));
-        titles.addView(text("USB DAC resampler control + live visuals", 13, SUB, false));
+        titles.addView(text("USB DAC audio control", 12, SUB, false));
         head.addView(titles);
         root.addView(head);
 
@@ -277,9 +256,11 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams svlp = new LinearLayout.LayoutParams(-1, -2);
         svlp.topMargin = dp(8);
         sc.addView(specView, svlp);
-        specSwitch = toggle(sc, "Live spectrum + peak meter");
+        specSwitch = lastDot;
+        specSwitch.setClickable(true);
+        specSwitch.setChecked(false);
         specSwitch.setOnCheckedChangeListener((v, on) -> { if (on) startSpectrum(); else stopSpectrum(); });
-        sc.addView(text("Uses Android's Visualizer on the output mix, which requires the microphone permission. Nothing is recorded or stored.", 11, SUB, false));
+        sc.addView(text("Tap the orange dot to switch on. Uses Android's Visualizer on the output mix, which needs the microphone permission. Nothing is recorded or stored.", 11, SUB, false));
 
         // --- Resampler card
         LinearLayout rs = card(root, "Resampler profile");
@@ -308,9 +289,14 @@ public class MainActivity extends Activity {
         rvlp.topMargin = dp(8);
         rs.addView(respView, rvlp);
 
-        sbSlider = new Slider(rs, "Stopband attenuation", 60, 220, " dB", () -> storeCustom());
-        hlSlider = new Slider(rs, "Filter half-length", 16, 800, " taps", () -> storeCustom());
-        tbwSlider = new Slider(rs, "Transition bandwidth (tbw)", 50, 150, " %", () -> storeCustom());
+        LinearLayout kr1 = new LinearLayout(this);
+        kr1.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams k1 = new LinearLayout.LayoutParams(-1, -2);
+        k1.topMargin = dp(10);
+        rs.addView(kr1, k1);
+        sbSlider = new Slider(kr1, "Stopband", 60, 220, " dB", () -> storeCustom());
+        hlSlider = new Slider(kr1, "Half-length", 16, 800, "", () -> storeCustom());
+        tbwSlider = new Slider(kr1, "TBW", 50, 150, " %", () -> storeCustom());
 
         TextView er = text("Apply filter when output rate is", 13, SUB, false);
         LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-1, -2);
@@ -322,18 +308,21 @@ public class MainActivity extends Activity {
         enableSpinner.setSelection(1);
         rs.addView(enableSpinner, new LinearLayout.LayoutParams(-1, -2));
 
-        afSlider = new Slider(rs, "af.resampler.quality (fallback, 7 = best)", 0, 7, "", null);
+        LinearLayout kr2 = new LinearLayout(this);
+        kr2.setOrientation(LinearLayout.HORIZONTAL);
+        kr2.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams k2 = new LinearLayout.LayoutParams(-1, -2);
+        k2.topMargin = dp(10);
+        rs.addView(kr2, k2);
+        afSlider = new Slider(kr2, "AF quality", 0, 7, "", null);
         afSlider.set(7);
-        rs.addView(text("Read only when audioserver starts: use \"Restart audio server\" or reboot.", 11, SUB, false));
-
-        admSwitch = toggle(rs, "Override Tensor audio buffering");
-        admSlider = new Slider(rs, "vendor.audio.adm.buffering.ms", 0, 20, " ms", null);
+        admSlider = new Slider(kr2, "Buffer", 0, 20, " ms", null);
+        admSwitch = toggle(kr2, "Buffer override");
         admSlider.set(2);
         admSwitch.setOnCheckedChangeListener((v, on) -> admSlider.enable(on));
         admSlider.enable(false);
-        rs.addView(text("Lower buffering can cut jitter but may cause dropouts. Leave off unless you hear problems.", 11, SUB, false));
+        rs.addView(text("AF quality (0-7, 7 = best) is read only when audioserver starts: use \"Restart audio server\" or reboot. Lower Tensor buffering can cut jitter but may cause dropouts: leave the override off unless you hear problems.", 11, SUB, false));
 
-        buildEqCard(root);
         buildGainCard(root);
         buildImpedanceCard(root);
 
@@ -351,11 +340,12 @@ public class MainActivity extends Activity {
 
         // --- Module card
         LinearLayout mod = card(root, "Module");
-        moduleLine = text("Checking root...", 15, TXT, true);
+        moduleLine = text("Checking root...", 14, TXT, true);
         LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(-1, -2);
         mlp.topMargin = dp(6);
         mod.addView(moduleLine, mlp);
-        moduleSwitch = toggle(mod, "Module enabled");
+        moduleSwitch = lastDot;
+        moduleSwitch.setClickable(true);
         moduleSwitch.setOnCheckedChangeListener((v, on) -> { if (!loading) setModuleEnabled(on); });
         modBtn = button(mod, "Install / reinstall module", CARD2, this::installModule);
         button(mod, "Save module zip to Downloads (manual flash)", CARD2, this::saveModuleZip);
@@ -380,9 +370,7 @@ public class MainActivity extends Activity {
 
         selectProfile("hq");
         detect();
-        restoreImpedance();
-        restoreEq();
-        loadIndex(false);
+        updateImpedance("");
     }
 
     @Override protected void onResume() {
@@ -390,7 +378,7 @@ public class MainActivity extends Activity {
         if (autoRefresh) tick();
         if (specSwitch != null && specSwitch.isChecked()) startSpectrum();
     }
-    @Override protected void onDestroy() { super.onDestroy(); stopViz(); io.shutdownNow(); net.shutdownNow(); }
+    @Override protected void onDestroy() { super.onDestroy(); stopViz(); io.shutdownNow(); }
 
     // ---------------------------------------------------------------- profile logic
     void storeCustom() {
@@ -413,7 +401,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < 4; i++) {
             boolean sel = i == idx;
             chips[i].setBackground(round(sel ? ACC : CARD2, 10));
-            chips[i].setTextColor(sel ? 0xFF06251C : TXT);
+            chips[i].setTextColor(sel ? 0xFF1A1100 : TXT);
         }
         profileHint.setText(PROFILE_HINTS[idx]);
         boolean isCustom = "custom".equals(p);
@@ -681,8 +669,8 @@ public class MainActivity extends Activity {
             return;
         }
         bg(() -> {
-            Root.Result r = Root.sh("sh " + Root.MOD + "/system/bin/usbaudio-status", 15);
-            onUi(() -> { statusView.setText(r.out); applyStatus(r.out); });
+            Root.Result r = Root.sh("sh " + Root.MOD + "/system/bin/usbaudio-status; echo; echo '== cards =='; cat /proc/asound/cards 2>&1", 15);
+            onUi(() -> { statusView.setText(r.out); applyStatus(r.out); updateImpedance(r.out); });
         });
     }
 
@@ -690,7 +678,6 @@ public class MainActivity extends Activity {
 
     void tick() {
         ui.removeCallbacks(tickRunnable);
-        if (eqStatus != null) eqStatus.setText(EqService.status);
         if (!autoRefresh) return;
         refreshStatus();
         ui.postDelayed(tickRunnable, 2000);
@@ -702,289 +689,15 @@ public class MainActivity extends Activity {
         stopViz();
     }
 
-    // ---------------------------------------------------------------- Impedance
-    static final double[] ZO_PRESETS = {0.1, 1, 5, 10};
-
-    void buildImpedanceCard(LinearLayout root) {
-        LinearLayout ic = card(root, "Output impedance");
-        ic.addView(text("Source (DAC/amp) output impedance vs headphone impedance. Android cannot measure or change a USB DAC's output impedance: take it from the DAC's spec sheet.", 11, SUB, false));
-        impView = new ImpedanceView(this);
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(-1, -2);
-        vlp.topMargin = dp(10);
-        ic.addView(impView, vlp);
-
-        LinearLayout tr = new LinearLayout(this);
-        tr.setOrientation(LinearLayout.HORIZONTAL);
-        for (int i = 0; i < 3; i++) {
-            final int idx = i;
-            TextView ch = text(Impedance.TYPES[i], 12, TXT, true);
-            ch.setGravity(Gravity.CENTER);
-            ch.setPadding(dp(6), dp(9), dp(6), dp(9));
-            ch.setOnClickListener(v -> { impType = idx; impChanged(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
-            lp.rightMargin = dp(6);
-            tr.addView(ch, lp);
-            typeChips[i] = ch;
-        }
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
-        tlp.topMargin = dp(10);
-        ic.addView(tr, tlp);
-
-        zoSlider = new Slider(ic, "Source output impedance", 1, 1000, "", this::impChanged);
-        zhSlider = new Slider(ic, "Headphone impedance", 8, 600, " ohm", this::impChanged);
-        sensSlider = new Slider(ic, "Sensitivity (dB SPL / mW)", 70, 130, " dB", this::impChanged);
-        vSlider = new Slider(ic, "DAC max output (Vrms)", 1, 40, "", this::impChanged);
-
-        LinearLayout pr = new LinearLayout(this);
-        pr.setOrientation(LinearLayout.HORIZONTAL);
-        for (double zv : ZO_PRESETS) {
-            final int tenth = (int) Math.round(zv * 10);
-            TextView ch = text(zv + " ohm", 12, TXT, false);
-            ch.setGravity(Gravity.CENTER);
-            ch.setBackground(round(CARD2, 10));
-            ch.setPadding(dp(6), dp(8), dp(6), dp(8));
-            ch.setOnClickListener(v -> { zoSlider.set(tenth); impChanged(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
-            lp.rightMargin = dp(6);
-            pr.addView(ch, lp);
-        }
-        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(-1, -2);
-        plp.topMargin = dp(10);
-        ic.addView(pr, plp);
-
-        LinearLayout tiles = new LinearLayout(this);
-        tiles.setOrientation(LinearLayout.HORIZONTAL);
-        tileLoss = tile(tiles, "LEVEL LOSS");
-        tileDf = tile(tiles, "DAMPING");
-        tileMw = tile(tiles, "POWER");
-        tileSpl = tile(tiles, "MAX SPL");
-        LinearLayout.LayoutParams tlp2 = new LinearLayout.LayoutParams(-1, -2);
-        tlp2.topMargin = dp(12);
-        ic.addView(tiles, tlp2);
-
-        impVerdict = text("", 13, TXT, true);
-        LinearLayout.LayoutParams vlp2 = new LinearLayout.LayoutParams(-1, -2);
-        vlp2.topMargin = dp(10);
-        ic.addView(impVerdict, vlp2);
-        ic.addView(text("Zo is in 0.1 ohm steps (slider 1 = 0.1 ohm). Rule of thumb: Zo below Zh/8 keeps level and tone changes inaudible; multi-driver IEMs with a varying impedance are the most sensitive. The curves per headphone type are illustrative shapes, not measurements.", 11, SUB, false));
-    }
-
-    double zoOhm() { return zoSlider.get() / 10.0; }
-
-    void impChanged() {
-        if (impView == null || zoSlider == null || vSlider == null) return;
-        zoSlider.val.setText(String.format(java.util.Locale.US, "%.1f ohm", zoOhm()));
-        vSlider.val.setText(String.format(java.util.Locale.US, "%.1f V", vSlider.get() / 10.0));
-        for (int i = 0; i < 3; i++) {
-            boolean sel = i == impType;
-            typeChips[i].setBackground(round(sel ? ACC : CARD2, 10));
-            typeChips[i].setTextColor(sel ? 0xFF06251C : TXT);
-        }
-        Impedance.Result r = Impedance.compute(zoOhm(), zhSlider.get(), sensSlider.get(), vSlider.get() / 10.0, impType);
-        impView.setParams(zoOhm(), zhSlider.get(), impType);
-        tileLoss.setText(String.format(java.util.Locale.US, "%.2f dB", r.lossNomDb));
-        tileDf.setText(r.damping > 999 ? ">999" : String.format(java.util.Locale.US, "%.1f", r.damping));
-        tileMw.setText(String.format(java.util.Locale.US, "%.0f mW", r.powerMw));
-        tileSpl.setText(String.format(java.util.Locale.US, "%.0f dB", r.splDb));
-        int[] cols = {ACC, WARN, BAD};
-        tileDf.setTextColor(cols[r.damping >= 8 ? 0 : r.damping >= 2 ? 1 : 2]);
-        impVerdict.setText(r.verdict);
-        impVerdict.setTextColor(cols[r.level]);
-        if (prefs != null) prefs.edit().putInt("imp_zo", zoSlider.get()).putInt("imp_zh", zhSlider.get())
-                .putInt("imp_sens", sensSlider.get()).putInt("imp_v", vSlider.get()).putInt("imp_type", impType).apply();
-    }
-
-    void restoreImpedance() {
-        zoSlider.set(prefs.getInt("imp_zo", 10));
-        zhSlider.set(prefs.getInt("imp_zh", 32));
-        sensSlider.set(prefs.getInt("imp_sens", 100));
-        vSlider.set(prefs.getInt("imp_v", 10));
-        impType = Math.max(0, Math.min(2, prefs.getInt("imp_type", 0)));
-        impChanged();
-    }
-
-    // ---------------------------------------------------------------- Equalizer + AutoEq
-    void buildEqCard(LinearLayout root) {
-        LinearLayout ec = card(root, "Equalizer - AutoEq + 10 bands");
-        ec.addView(text("Float multiband EQ (128 frequency bands, Android DynamicsProcessing). It never resamples or reduces bit depth, the USB output keeps its rate and format. Drag the orange dots (31 Hz - 16 kHz, +-12 dB); the grey dashed curve is the AutoEq profile.", 11, SUB, false));
-        eqCurve = new EqCurveView(this);
-        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-1, -2);
-        clp.topMargin = dp(10);
-        ec.addView(eqCurve, clp);
-        eqCurve.listener = (i, tenths, done) -> { eqMan[i] = tenths; eqChanged(done); };
-
-        eqSwitch = toggle(ec, "Equalizer active");
-        eqSwitch.setOnCheckedChangeListener((v, on) -> { if (!eqRestoring) setEqRunning(on); });
-        headSwitch = toggle(ec, "Auto headroom (lowers input gain so boosts cannot clip)");
-        headSwitch.setChecked(true);
-        headSwitch.setOnCheckedChangeListener((v, on) -> eqChanged(true));
-        preSlider = new Slider(ec, "Preamp", -120, 60, "", () -> eqChanged(false));
-        preSlider.bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) { preSlider.upd(); if (fromUser) eqChanged(false); }
-            @Override public void onStartTrackingTouch(SeekBar sb) { }
-            @Override public void onStopTrackingTouch(SeekBar sb) { eqChanged(true); }
-        });
-        preSlider.set(0);
-        button(ec, "Reset 10 manual bands", CARD2, () -> { java.util.Arrays.fill(eqMan, 0); eqChanged(true); });
-        eqPlanText = text("", 12, TXT, false);
-        ec.addView(eqPlanText);
-        eqStatus = mono(11);
-        eqStatus.setText(EqService.status);
-        ec.addView(eqStatus);
-
-        TextView h = text("AUTOEQ PROFILE", 11, ACC, true);
-        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(-1, -2);
-        hl.topMargin = dp(16);
-        ec.addView(h, hl);
-        eqInfo = text("Loading AutoEq index...", 12, SUB, false);
-        ec.addView(eqInfo);
-        eqSearch = new EditText(this);
-        eqSearch.setHint("Search headphone / IEM (e.g. HD 600)");
-        eqSearch.setHintTextColor(SUB);
-        eqSearch.setTextColor(TXT);
-        eqSearch.setSingleLine(true);
-        eqSearch.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        eqSearch.setBackground(round(CARD2, 10));
-        eqSearch.setPadding(dp(12), dp(10), dp(12), dp(10));
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
-        slp.topMargin = dp(8);
-        ec.addView(eqSearch, slp);
-        eqSearch.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { showEqResults(); }
-            @Override public void afterTextChanged(Editable e) { }
-        });
-        eqResults = new LinearLayout(this);
-        eqResults.setOrientation(LinearLayout.VERTICAL);
-        ec.addView(eqResults);
-        button(ec, "Clear AutoEq profile", CARD2, () -> { eqProfile = null; eqNameStr = ""; eqChanged(true); eqInfo.setText("AutoEq profile cleared"); });
-        button(ec, "Refresh AutoEq index", CARD2, () -> loadIndex(true));
-        ec.addView(text("Profiles come from github.com/jaakkopasanen/AutoEq (MIT). Global effects are best-effort on Android: the EQ attaches to the global mix and to every player that announces an audio session. The status box shows what really attached. Apps using Android's bit-perfect USB path bypass effects. EQ stops if the phone reboots or the app is force-stopped.", 11, SUB, false));
-    }
-
-    void eqChanged(boolean persist) {
-        if (eqCurve == null || preSlider == null) return;
-        preSlider.val.setText(String.format(java.util.Locale.US, "%+.1f dB", preSlider.get() / 10.0));
-        eqCurve.setData(eqProfile, eqMan);
-        Eq.Plan p = Eq.plan(eqProfile, eqMan, preSlider.get() / 10.0, headSwitch.isChecked(), 32);
-        eqPlanText.setText(String.format(java.util.Locale.US, "Peak boost %+.1f dB -> input gain %+.1f dB%s", p.peakDb, p.inputGainDb,
-                eqNameStr.isEmpty() ? "" : "  |  AutoEq: " + eqNameStr));
-        if (!persist) return;
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < eqMan.length; i++) sb.append(i > 0 ? "," : "").append(eqMan[i]);
-        prefs.edit().putString("eq_manual", sb.toString()).putInt("eq_pre", preSlider.get())
-                .putBoolean("eq_head", headSwitch.isChecked()).apply();
-        if (EqService.running) {
-            try { startService(new Intent(this, EqService.class).setAction(EqService.ACTION_APPLY)); } catch (RuntimeException ignored) { }
-            ui.postDelayed(() -> { if (eqStatus != null) eqStatus.setText(EqService.status); }, 800);
-        }
-    }
-
-    void setEqRunning(boolean on) {
-        prefs.edit().putBoolean("eq_on", on).apply();
-        Intent i = new Intent(this, EqService.class);
-        try {
-            if (on) {
-                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 8);
-                eqChanged(true);
-                startForegroundService(i.setAction(EqService.ACTION_APPLY));
-                ui.postDelayed(() -> { if (eqStatus != null) eqStatus.setText(EqService.status); }, 1200);
-            } else {
-                stopService(i);
-                eqStatus.setText("Equalizer off");
-            }
-        } catch (RuntimeException e) {
-            eqStatus.setText("Could not start the service: " + e.getMessage());
-        }
-    }
-
-    void restoreEq() {
-        eqRestoring = true;
-        String t = prefs.getString("eq_text", "");
-        eqProfile = t.isEmpty() ? null : AutoEq.Profile.parse(t);
-        eqNameStr = prefs.getString("eq_name", "");
-        String[] parts = prefs.getString("eq_manual", "").split(",");
-        for (int i = 0; i < eqMan.length && i < parts.length; i++) {
-            try { eqMan[i] = Integer.parseInt(parts[i].trim()); } catch (NumberFormatException ignored) { }
-        }
-        preSlider.set(prefs.getInt("eq_pre", 0));
-        headSwitch.setChecked(prefs.getBoolean("eq_head", true));
-        eqSwitch.setChecked(EqService.running);
-        eqRestoring = false;
-        eqChanged(false);
-    }
-
-    void loadIndex(boolean force) {
-        final java.io.File cache = new java.io.File(getFilesDir(), "autoeq_index.md");
-        if (!force && cache.exists()) {
-            try {
-                byte[] b = java.nio.file.Files.readAllBytes(cache.toPath());
-                eqIndex = AutoEq.parseIndex(new String(b, java.nio.charset.StandardCharsets.UTF_8));
-                eqInfo.setText(eqIndex.size() + " profiles available (cached)");
-                if (System.currentTimeMillis() - cache.lastModified() < 7L * 86400000L) return;
-            } catch (Exception ignored) { }
-        }
-        eqInfo.setText("Downloading AutoEq index...");
-        net.execute(() -> {
-            try {
-                String md = AutoEq.fetch(AutoEq.RAW + "/INDEX.md", 30000);
-                List<AutoEq.Entry> list = AutoEq.parseIndex(md);
-                if (list.isEmpty()) throw new Exception("empty index");
-                java.nio.file.Files.write(cache.toPath(), md.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                onUi(() -> { eqIndex = list; eqInfo.setText(list.size() + " profiles available"); showEqResults(); });
-            } catch (Exception e) {
-                onUi(() -> eqInfo.setText((eqIndex == null ? "Index unavailable: " : "Refresh failed: ") + e.getMessage() + " (check internet)"));
-            }
-        });
-    }
-
-    void showEqResults() {
-        if (eqResults == null) return;
-        eqResults.removeAllViews();
-        if (eqIndex == null) return;
-        for (AutoEq.Entry e : AutoEq.search(eqIndex, eqSearch.getText().toString(), 12)) {
-            TextView b = text(e.label(), 13, TXT, false);
-            b.setBackground(round(CARD2, 10));
-            b.setPadding(dp(12), dp(10), dp(12), dp(10));
-            b.setOnClickListener(v -> selectEq(e));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-            lp.topMargin = dp(6);
-            eqResults.addView(b, lp);
-        }
-    }
-
-    void selectEq(AutoEq.Entry e) {
-        eqInfo.setText("Downloading " + e.name + "...");
-        net.execute(() -> {
-            try {
-                String txt = AutoEq.fetch(e.url(), 20000);
-                AutoEq.Profile p = AutoEq.Profile.parse(txt);
-                if (p.filters.isEmpty()) throw new Exception("no filters in profile");
-                onUi(() -> {
-                    eqProfile = p;
-                    eqNameStr = e.name;
-                    prefs.edit().putString("eq_text", txt).putString("eq_name", e.name).apply();
-                    eqInfo.setText("Selected: " + e.name + " (" + p.filters.size() + " filters, preamp " + p.preamp + " dB)");
-                    eqResults.removeAllViews();
-                    eqChanged(true);
-                });
-            } catch (Exception ex) {
-                onUi(() -> eqInfo.setText("Download failed: " + ex.getMessage()));
-            }
-        });
-    }
-
     // ---------------------------------------------------------------- USB card hardware gain
     static final class GainCtl {
         int card, numid, min, max, count, cur;
         String cardId, name, type;
         long dbMin, dbMax;
         boolean hasDb;
-        TextView label;
         String dbText(int v) {
             if (!hasDb || max == min) return String.valueOf(v);
-            return String.format(java.util.Locale.US, "%d (%.1f dB)", v, (dbMin + (double) (v - min) / (max - min) * (dbMax - dbMin)) / 100.0);
+            return String.format(java.util.Locale.US, "%.1f dB", (dbMin + (double) (v - min) / (max - min) * (dbMax - dbMin)) / 100.0);
         }
     }
 
@@ -1069,31 +782,31 @@ public class MainActivity extends Activity {
         if (!raw.contains("@@CARD")) { gainStatus.setText("No USB audio card detected (is the DAC plugged in?)"); return; }
         if (list.isEmpty()) { gainStatus.setText("USB card found but it exposes no playback volume/gain control to Android (typical for DACs with fixed output or buttons only).\n" + raw.replaceAll("(?m)^\\d+\\t.*$", "").trim()); return; }
         gainStatus.setText(list.size() + " control(s) on " + list.get(0).cardId);
+        LinearLayout krow = null;
+        int inRow = 0;
         for (GainCtl g : list) {
             if (g.type.equals("bool")) {
-                Switch sw = toggle(gainBox, g.name);
+                CompoundButton sw = toggle(gainBox, g.name);
                 sw.setChecked(g.cur != 0);
                 sw.setOnCheckedChangeListener((v, on) -> setGain(g, on ? 1 : 0));
                 continue;
             }
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            TextView n = text(g.name, 13, SUB, false);
-            g.label = text(g.dbText(g.cur), 13, TXT, true);
-            row.addView(n, new LinearLayout.LayoutParams(0, -2, 1f));
-            row.addView(g.label);
-            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
-            rlp.topMargin = dp(12);
-            gainBox.addView(row, rlp);
-            SeekBar bar = new SeekBar(this);
-            bar.setMax(g.max - g.min);
-            bar.setProgress(g.cur - g.min);
-            bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) { g.label.setText(g.dbText(p + g.min)); }
-                @Override public void onStartTrackingTouch(SeekBar sb) { }
-                @Override public void onStopTrackingTouch(SeekBar sb) { setGain(g, sb.getProgress() + g.min); }
-            });
-            gainBox.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+            if (krow == null || inRow == 3) {
+                krow = new LinearLayout(this);
+                krow.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+                rlp.topMargin = dp(10);
+                gainBox.addView(krow, rlp);
+                inRow = 0;
+            }
+            String shortName = g.name.replace(" Playback", "").replace(" Volume", " Vol");
+            KnobView kv = new KnobView(this, shortName, g.min, g.max, g::dbText);
+            kv.color = g.hasDb ? TEAL : 0xFFF5A135;
+            kv.set(g.cur);
+            kv.listener = (val, fromUser, finished) -> { if (finished) setGain(g, val); };
+            krow.addView(kv, new LinearLayout.LayoutParams(0, -2, 1f));
+            inRow++;
+            if (inRow < 3 && g == list.get(list.size() - 1)) for (int q = inRow; q < 3; q++) krow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
         }
     }
 
@@ -1109,14 +822,72 @@ public class MainActivity extends Activity {
         });
     }
 
+    // ---------------------------------------------------------------- Output impedance (automatic, read-only)
+    void buildImpedanceCard(LinearLayout root) {
+        LinearLayout ic = card(root, "Output impedance");
+        impSource = text("No USB DAC detected", 14, TXT, true);
+        ic.addView(impSource);
+        impBasis = text("", 11, SUB, false);
+        ic.addView(impBasis);
+        impTable = new LinearLayout(this);
+        impTable.setOrientation(LinearLayout.VERTICAL);
+        impTable.setBackground(round(0xFF181818, 5));
+        impTable.setPadding(dp(10), dp(8), dp(10), dp(8));
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+        tlp.topMargin = dp(10);
+        ic.addView(impTable, tlp);
+        ic.addView(text("Detected automatically from the USB DAC (refreshes with the live status). Android cannot read a DAC's output impedance, so it comes from a small built-in list of measured dongles or a typical 1 ohm assumption. Rule of thumb: damping factor (load / source) of 8 or more is transparent; multi-driver IEMs are the most sensitive.", 11, SUB, false));
+        updateImpedance("");
+    }
+
+    void updateImpedance(String statusOut) {
+        if (impTable == null) return;
+        Impedance.Source src = Impedance.detect(statusOut);
+        impSource.setText(src.label + "   Zo " + String.format(java.util.Locale.US, "%.1f ohm", src.zo));
+        impBasis.setText(src.basis);
+        impTable.removeAllViews();
+        impTable.addView(impRow("Load", "Loss", "Damping", -1, true));
+        int[] cols = {GREEN, WARN, BAD};
+        for (Impedance.Row r : Impedance.table(src.zo)) {
+            impTable.addView(impRow(r.label, String.format(java.util.Locale.US, "%.2f dB", r.lossDb),
+                    r.damping > 999 ? ">999" : String.format(java.util.Locale.US, "%.0f", r.damping), cols[r.level], false));
+        }
+    }
+
+    View impRow(String a, String b, String c, int dot, boolean head) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(4), 0, dp(4));
+        int col = head ? SUB : TXT;
+        if (head) row.addView(new View(this), new LinearLayout.LayoutParams(dp(18), 1));
+        else {
+            LiveButton d = new LiveButton(this, "", LiveButton.DOT);
+            d.setClickable(false);
+            ((GradientDrawable) d.getBackground()).setColor(dot);
+            row.addView(d, new LinearLayout.LayoutParams(dp(10), dp(10)));
+            row.addView(new View(this), new LinearLayout.LayoutParams(dp(8), 1));
+        }
+        TextView x = text(a, 12, col, head);
+        row.addView(x, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView y = text(b, 12, head ? SUB : TEAL, head);
+        y.setGravity(Gravity.END);
+        row.addView(y, new LinearLayout.LayoutParams(dp(70), -2));
+        TextView z = text(c, 12, head ? SUB : TEAL, head);
+        z.setGravity(Gravity.END);
+        row.addView(z, new LinearLayout.LayoutParams(dp(64), -2));
+        return row;
+    }
+
     // ---------------------------------------------------------------- visuals
     TextView tile(LinearLayout parent, String label) {
         LinearLayout t = new LinearLayout(this);
         t.setOrientation(LinearLayout.VERTICAL);
-        t.setBackground(round(CARD2, 10));
+        t.setBackground(round(0xFF181818, 5));
         t.setPadding(dp(8), dp(6), dp(8), dp(6));
         t.addView(text(label, 10, SUB, false));
-        TextView v = text("-", 15, TXT, true);
+        TextView v = text("-", 13, TEAL, true);
+        v.setSingleLine(true);
         v.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         t.addView(v);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
@@ -1140,14 +911,14 @@ public class MainActivity extends Activity {
             tileFmt.setText(fmt);
             tileCh.setText(String.valueOf(ch));
             tileSrc.setText(rate == 44100 ? "BYPASS" : "ON");
-            tileSrc.setTextColor(rate == 44100 ? ACC : WARN);
+            tileSrc.setTextColor(rate == 44100 ? GREEN : WARN);
         } else {
             pathView.set(false, 0, "", 0, plabel);
             tileRate.setText("-");
             tileFmt.setText("-");
             tileCh.setText("-");
             tileSrc.setText("-");
-            tileSrc.setTextColor(TXT);
+            tileSrc.setTextColor(TEAL);
         }
     }
 
